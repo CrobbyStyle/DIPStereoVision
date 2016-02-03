@@ -25,22 +25,31 @@ static CvHaarClassifierCascade* cascade = 0;
 
 int main()
 {
-	int numBoards = 10;  //define el número de tableros de ajedrez que se va a capturar
+	int numBoards = 9;  //define el número de tableros de ajedrez que se va a capturar
 	int numCornersHor = 7; //número de esquinas internas a lo ancho del tablero (pts_imgeto patrón de calibración)
 	int numCornersVer = 7; //número de esquinas internas a lo largo del tablero (pts_imgeto patrón de calibración)
 	char distortedImage[100];
 
-	VideoCapture vcap;
-	Mat frame;
-	const std::string video = "http://200.126.19.98/cgi-bin/mjpg?stream=0?jiggly.mjpg";
-	if (!vcap.open(video)) {
+	VideoCapture vcap, vcap2;
+	Mat frame, frame2;
+	const std::string videoR = "http://200.126.19.123/cgi-bin/mjpg?stream=0?jiggly.mjpg";
+	const std::string videoL = "http://200.126.19.98/cgi-bin/mjpg?stream=0?jiggly.mjpg";
+	if (!vcap.open(videoR)) {
 		std::cout << "Error opening video stream or file" << std::endl;
 		return -1;
 	}
-	vcap.set(CV_CAP_PROP_FPS, 2.5);
+	if (!vcap2.open(videoL)) {
+		std::cout << "Error opening video stream or file" << std::endl;
+		return -1;
+	}
+
+	vcap.set(CV_CAP_PROP_FPS, 30);
+
 	int frame_width = vcap.get(CV_CAP_PROP_FRAME_WIDTH);
 	int frame_height = vcap.get(CV_CAP_PROP_FRAME_HEIGHT);
-
+	
+	int frame_width2 = vcap2.get(CV_CAP_PROP_FRAME_WIDTH);
+	int frame_height2 = vcap2.get(CV_CAP_PROP_FRAME_HEIGHT);
 	//variables adicionales que se usarán mas adelante
 	int numTotalCorners = numCornersHor * numCornersVer;
 	Size board_sz = Size(numCornersHor, numCornersVer);
@@ -52,7 +61,7 @@ int main()
 	int successes = 0; //successes es una 'bandera' que me indicará si un tablero ha sido detetado en la imagen.
 
 	//creamos dos imágenes a usarse durante el proceso de calibración
-	Mat image;
+	Mat image, image2;
 	Mat gray_image;
 
 	//pts_img contiene una lista de puntos que corresponde a las coordenadas 3D de todos las esquinas que se repiten para cada una de las imágenes.
@@ -71,6 +80,7 @@ int main()
 
 
 	//////////////////// Bloque principal del algoritmo de calibración ///////////////////////
+	
 	for (;;) {
 		vcap >> image;
 		if (successes < numBoards) //permanecemos en el lazo siempre y cuando el número de tableros que la cámara observe sea menor al número de tablero ingresado
@@ -110,11 +120,7 @@ int main()
 					break;
 			}
 		}
-		//cv::imshow("Output Window", image);
-		//if (cvWaitKey(1) >= 0) break;
 	}
-	//image.release();
-	//vcap.release();
 
 
 	////////////////////////////////////
@@ -140,32 +146,92 @@ int main()
 
 	//declaro la variable en donde se almacenará la imagen sin distorsión
 
-	//Mat imageUndistorted2;
-	Mat imageUndistorted;
+	Mat imageUndistorted, imageUndistorted2;
+	Mat g1, g2;
+	Mat disp, disp8;
 
-	//Mat image2 = imread(distortedImage, CV_LOAD_IMAGE_COLOR);
-	//undistort(image, imageUndistorted2, cameraMatrix, distCoeffs);
-	//finalmente mostramos las imágenes: original y calibrada.
-	//imshow("Imagen Distorsionada", image2);
-	//imshow("Imagen sin Distorsión", imageUndistorted2);
-
+	// 30 fps para ambas señales
 	vcap.set(CV_CAP_PROP_FPS, 30);
+	vcap2.set(CV_CAP_PROP_FPS, 30);
+	
 	for (;;)
 	{
+		// extraigo ambas señales
 		vcap.read(image);
-		
+		vcap2.read(image2);
 
-		//una vez que tenemos los coeficientes de distorsión, se usa la función "undistort" para calibrar las distorsiones en la imagen.
+		// corrijo efecto barril en ambas señales
 		undistort(image, imageUndistorted, cameraMatrix, distCoeffs);
+		undistort(image2, imageUndistorted2, cameraMatrix, distCoeffs);
 
+		// gris de ambas señales sin distorcion
+		cvtColor(imageUndistorted, g1, CV_BGR2GRAY);
+		cvtColor(imageUndistorted2, g2, CV_BGR2GRAY);
+		
+		// inicializando variables del mapa de disparidad
+		StereoBM sbm;
+		sbm.state->SADWindowSize = 9;
+		sbm.state->numberOfDisparities = 112;
+		sbm.state->preFilterSize = 5;
+		sbm.state->preFilterCap = 61;
+		sbm.state->minDisparity = -39;
+		sbm.state->textureThreshold = 507;
+		sbm.state->uniquenessRatio = 0;
+		sbm.state->speckleWindowSize = 0;
+		sbm.state->speckleRange = 8;
+		sbm.state->disp12MaxDiff = 1;
+
+		// calculo mapa de disparidad entre señal derecha e izquierda
+		sbm(g1, g2, disp);
+		normalize(disp, disp8, 0, 255, CV_MINMAX, CV_8U);
+	
 		//finalmente mostramos las imágenes: original y calibrada.
-		imshow("Imagen Cámara Distorsionada", image);
-		imshow("Imagen Cámara sin Distorsión", imageUndistorted);
+		imshow("Imagen R Cámara Distorsionada", image);
+		imshow("Imagen R Cámara sin Distorsión", imageUndistorted);
+		imshow("Imagen L Cámara Distorsionada", image2);
+		imshow("Imagen L Cámara sin Distorsión", imageUndistorted2);
+
+		// mostramos mapa de disparidad
+		imshow("disp", disp8);
+
 		waitKey(1);
 	}
 
 	waitKey(0);
 	vcap.release();
+	vcap2.release();
 	image.release();
+	image2.release();
 	return 0;
 }
+
+//void main(){
+//	Mat img1, img2, g1, g2;
+//	Mat disp, disp8;
+//
+//	img1 = imread("leftImage.jpg");
+//	img2 = imread("rightImage.jpg");
+//
+//	cvtColor(img1, g1, CV_BGR2GRAY);
+//	cvtColor(img2, g2, CV_BGR2GRAY);
+//
+//	StereoBM sbm;
+//	sbm.state->SADWindowSize = 9;
+//	sbm.state->numberOfDisparities = 112;
+//	sbm.state->preFilterSize = 5;
+//	sbm.state->preFilterCap = 61;
+//	sbm.state->minDisparity = -39;
+//	sbm.state->textureThreshold = 507;
+//	sbm.state->uniquenessRatio = 0;
+//	sbm.state->speckleWindowSize = 0;
+//	sbm.state->speckleRange = 8;
+//	sbm.state->disp12MaxDiff = 1;
+//
+//	sbm(g1, g2, disp);
+//	normalize(disp, disp8, 0, 255, CV_MINMAX, CV_8U);
+//
+//	imshow("left", img1);
+//	imshow("right", img2);
+//	imshow("disp", disp8);
+//	cvWaitKey(0);
+//}
